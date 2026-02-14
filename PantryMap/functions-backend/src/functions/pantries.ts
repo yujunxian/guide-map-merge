@@ -20,19 +20,6 @@ export async function getPantries(
   try {
     if (req.method === "OPTIONS") return handleOptions(req);
     const origin = req.headers.get("origin");
-    
-    // 如果没有配置 Cosmos DB，返回空数组（前端会自动 fallback）
-    const endpoint = process.env.COSMOS_ENDPOINT;
-    const key = process.env.COSMOS_KEY;
-    if (!endpoint || !key) {
-      context.log("Cosmos DB not configured, returning empty array (frontend will use fallback)");
-      return {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
-        body: JSON.stringify([]),
-      };
-    }
-
     const dbName = process.env.COSMOS_DATABASE ?? "microPantry";
     const containerName = process.env.COSMOS_CONTAINER_PANTRIES ?? "pantries";
 

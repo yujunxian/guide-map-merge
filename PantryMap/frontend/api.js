@@ -8,7 +8,8 @@
    */
 
   const API = {};
-  const API_BASE_URL = 'http://localhost:7071/api';
+  // Use window.PantryAPI_CONFIG?.apiBaseUrl for production (e.g. Azure) so Beacon Hill (254) gets sensor data from GetLatestPantry
+  const API_BASE_URL = (typeof window !== 'undefined' && window.PantryAPI_CONFIG && window.PantryAPI_CONFIG.apiBaseUrl) || 'http://localhost:7071/api';
   const FALLBACK_PANTRIES_URL = './pantries.json';
 
   // ---------------------------
@@ -88,6 +89,72 @@
 
   function isNetworkError(error) {
     return error instanceof TypeError || error?.name === 'TypeError';
+  }
+
+  // ---------------------------
+  // Donation-based stock (Mode 2 / Self-reported): weight mapping and 24h window
+  // ONE OR FEW ITEMS → 2 kg; ABOUT 1 GROCERY BAG → 10 kg; MORE THAN 1 GROCERY BAG → 25 kg
+  // Special: 5× "One or few" = Medium (10 kg); 2× "More than 1 grocery bag" = High (25 kg)
+  const DONATION_WEIGHT_KG = {
+    low_donation: 2,
+    medium_donation: 10,
+    high_donation: 25,
+  };
+  const DONATION_24H_MS = 24 * 60 * 60 * 1000;
+
+  // Stock level (sens_weight / tot_reported_weight vs low_weight / high_weight)
+  // Reasonable range: > -2 kg & < 150 kg so sensor readings like Beacon Hill (~78 kg) are accepted.
+  // ---------------------------
+  const STOCK_PARAMS = {
+    reasonableMin: -2,
+    reasonableMax: 150,
+    low_weight: 5,   // kg: <= low_weight -> LOW; low_weight < w <= high_weight -> MEDIUM; > high_weight -> HIGH
+    high_weight: 25,
+  };
+
+  function isWeightInReasonableRange(weightKg) {
+    const n = coerceNumber(weightKg);
+    if (n === null) return false;
+    return n > STOCK_PARAMS.reasonableMin && n < STOCK_PARAMS.reasonableMax;
+  }
+
+  /**
+   * Compute stock level from weight (sens_weight or tot_reported_weight).
+   * Returns { level: 'low'|'medium'|'high', label, cls } or null if weight invalid/out of range.
+   */
+  function computeStockLevelFromWeight(weightKg) {
+    const n = coerceNumber(weightKg);
+    if (n === null || !isWeightInReasonableRange(n)) return null;
+    if (n <= STOCK_PARAMS.low_weight) return { level: 'low', label: 'Low Stock', cls: 'low' };
+    if (n <= STOCK_PARAMS.high_weight) return { level: 'medium', label: 'Medium Stock', cls: 'medium' };
+    return { level: 'high', label: 'In Stock', cls: 'high' };
+  }
+
+  /**
+   * Resolve stock level and update_datetime:
+   * - Sensor mode: sens_weight + most recent sensor reading datetime.
+   * - Self-reported mode: tot_reported_weight + donation_datetime.
+   * - No-update: neither available.
+   */
+  function resolveStockLevel(p = {}) {
+    const sensWeight = coerceNumber(
+      p.sensors?.weightKg ?? p.weightKg ?? p.weight ?? p.current_weight ?? p.loadcell_kg
+    );
+    const sensUpdatedAt = p.sensors?.updatedAt ?? p.updatedAt ?? p.timestamp ?? p.lastUpdated ?? null;
+    const totReportedWeight = coerceNumber(p.tot_reported_weight ?? p.totReportedWeight ?? p.reportedWeightKg);
+    const donationDatetime = p.donation_datetime ?? p.donationDatetime ?? p.lastDonationAt ?? null;
+
+    // Prefer sensor if weight is valid
+    if (sensWeight !== null && isWeightInReasonableRange(sensWeight)) {
+      const badge = computeStockLevelFromWeight(sensWeight);
+      if (badge) return { ...badge, weightKg: sensWeight, updatedAt: sensUpdatedAt, source: 'sensor' };
+    }
+    // Else self-reported donation
+    if (totReportedWeight !== null && isWeightInReasonableRange(totReportedWeight)) {
+      const badge = computeStockLevelFromWeight(totReportedWeight);
+      if (badge) return { ...badge, weightKg: totReportedWeight, updatedAt: donationDatetime, source: 'self-reported' };
+    }
+    return null;
   }
 
   // ---------------------------
@@ -307,70 +374,131 @@
   // ---------------------------
 
   function normalizePantry(p = {}) {
-    const cosmosId = toStringSafe(p.id);
-    const legacyId = toStringSafe(p.pantryId);
-    const { normalized: normalizedFallbackId } = resolvePantryId(cosmosId || legacyId || '');
-    const id = cosmosId || legacyId || normalizedFallbackId || '';
+    // 🔹 ID: be lenient, but always coerce to string
+    const rawId =
+      p.id ??
+      p.pantryId ??
+      p.PantryId ??
+      p.device_id ??
+      p.deviceId ??
+      p.device ??
+      p.slug ??
+      p.key ??
+      Math.random().toString(36).slice(2);
 
-    const rawStatus = trimString(p.status).toLowerCase();
-    const status = rawStatus === 'active' ? 'open' : rawStatus || 'open';
+    const id = toStringSafe(rawId) || Math.random().toString(36).slice(2);
 
-    const detail = trimString(p.detail);
-    const description =
-      detail ||
-      trimString(p.description) ||
-      trimString(p.network) ||
-      '';
+    // 🔹 Display name: prefer explicit name, fall back to any device/slug fallback
+    const name =
+      p.name ||
+      p.title ||
+      p.displayName ||
+      p.device_name ||
+      p.deviceName ||
+      p.device ||
+      p.slug ||
+      `Pantry ${id}`;
+
+    const statusRaw = (p.status || p.state || '').toString().toLowerCase().trim();
+    let status = 'open';
+    if (['closed', 'inactive', 'offline'].includes(statusRaw)) status = 'closed';
+    if (['low', 'low-inventory', 'running-low'].includes(statusRaw)) status = 'low-inventory';
+
+    const location = extractLocation(p);
+    const address = extractAddress(p);
+    const pantryType = derivePantryType(p);
+    const photos = extractPhotos(p);
+    const contact = extractContact(p);
+
+    const inventory =
+      p.inventory && typeof p.inventory === 'object'
+        ? p.inventory
+        : { categories: Array.isArray(p.categories) ? p.categories : [] };
+
+    // Sensors: try to standardize the fields for UI
+    const sensors = {
+      // IMPORTANT: do NOT default to 0 here, otherwise every pantry looks like it has a valid
+      // sensor reading of 0 kg and will block self‑reported donations from taking effect.
+      weightKg:
+        coerceNumber(p.weightKg) ??
+        coerceNumber(p.weight) ??
+        coerceNumber(p.current_weight) ??
+        coerceNumber(p.loadcell_kg) ??
+        null,
+      temperature:
+        coerceNumber(p.temperature) ??
+        coerceNumber(p.temp) ??
+        coerceNumber(p.temp_c) ??
+        coerceNumber(p.air_temp) ??
+        null,
+      humidity:
+        coerceNumber(p.humidity) ??
+        coerceNumber(p.humid) ??
+        coerceNumber(p.air_humid) ??
+        null,
+      doorState: p.doorState || p.door || p.door_event || null,
+      updatedAt:
+        p.updatedAt ||
+        p.lastUpdated ||
+        p.timestamp ||
+        p.time ||
+        p._ts ||
+        (p._metadata && p._metadata.updatedAt) ||
+        null,
+    };
+
+    const latestActivity =
+      p.latestActivity ||
+      p.lastActivity ||
+      p.lastDonation ||
+      p.timestamp ||
+      sensors.updatedAt ||
+      null;
+
+    const wishlist = Array.isArray(p.wishlist) ? p.wishlist : [];
+
+    const stats = {
+      visitsPerDay: coerceNumber(p.visitsPerDay) ?? coerceNumber(p.stats?.visitsPerDay) ?? 0,
+      ...((p.stats && typeof p.stats === 'object') ? p.stats : {}),
+    };
+
+    // Stock level: sensor mode (sens_weight) or self-reported (tot_reported_weight); no-update if neither
+    const stockResolution = resolveStockLevel({ ...p, sensors });
+    const stockLevel = stockResolution ? stockResolution.label : null;
+    const stockLevelCls = stockResolution ? stockResolution.cls : null;
+    const stockLevelUpdatedAt = stockResolution ? stockResolution.updatedAt : null;
+    const stockLevelWeightKg = stockResolution && stockResolution.weightKg != null ? stockResolution.weightKg : null;
+    const stockLevelSource = stockResolution ? stockResolution.source : null;
 
     return {
       id,
-      name: isNonEmptyString(p.name) ? p.name.trim() : 'Untitled Pantry',
+      name,
       status,
-
-      // ✅ requirement: composed address
-      address: extractAddress(p),
-
-      pantryType: derivePantryType(p),
-      description,
-
+      address,
+      pantryType,
+      description: p.description || p.about || p.detail || '',
       acceptedFoodTypes: Array.isArray(p.acceptedFoodTypes) ? p.acceptedFoodTypes : [],
-      hours: p.hours ?? {},
-
-      photos: extractPhotos(p),
-      location: extractLocation(p),
-
-      inventory: p.inventory ?? { categories: [] },
-
-      sensors:
-        p.sensors ??
-        {
-          weightKg: 0,
-          lastDoorEvent: '',
-          updatedAt: new Date().toISOString(),
-          foodCondition: '',
-        },
-
-      // ✅ requirement: contact becomes a display model (no avatar/name)
-      contact: extractContact(p),
-
-      latestActivity: p.latestActivity ?? null,
-      stats:
-        p.stats ??
-        {
-          visitsPerDay: 0,
-          visitsPerWeek: 0,
-          donationAvgPerDayKg: 0,
-          donationAvgPerWeekKg: 0,
-          popularTimes: [],
-        },
-
-      wishlist: Array.isArray(p.wishlist) ? p.wishlist : [],
-      updatedAt: p.updatedAt ?? p.lastUpdated ?? p.modified ?? null,
+      hours: p.hours && typeof p.hours === 'object' ? p.hours : {},
+      photos,
+      location,
+      inventory,
+      sensors,
+      contact,
+      latestActivity,
+      stats,
+      wishlist,
+      updatedAt: sensors.updatedAt || latestActivity || null,
+      stockLevel,
+      stockLevelCls,
+      stockLevelUpdatedAt,
+      stockLevelWeightKg,
+      stockLevelSource,
+      _raw: p, // keep original shape for debugging & advanced UI
     };
   }
 
   // ---------------------------
-  // Fallback loaders
+  // Fallback Loaders
   // ---------------------------
 
   async function loadFallbackPantries() {
@@ -413,27 +541,13 @@
       console.log('Fetching pantries from backend API...', url);
       const list = await fetchJson(url);
       const normalized = Array.isArray(list) ? list.map(normalizePantry) : [];
-      
-      // 如果后端返回空数组（可能是未配置 Cosmos DB），使用 fallback
-      if (normalized.length === 0) {
-        console.warn('[PantryAPI] Backend returned empty array, falling back to static pantries.json');
-        const fallbackNormalized = await loadFallbackPantries();
-        console.info('[PantryAPI] Using fallback pantries payload', fallbackNormalized.length);
-        return fallbackNormalized;
-      }
-      
       console.info('[PantryAPI] Using backend pantries payload', normalized.length);
       return normalized;
     } catch (error) {
-      // 网络错误或 500 错误都 fallback
-      if (isNetworkError(error) || error?.status === 500) {
-        console.warn('[PantryAPI] Backend unreachable or error, falling back to static pantries.json');
-        const normalized = await loadFallbackPantries();
-        console.info('[PantryAPI] Using fallback pantries payload', normalized.length);
-        return normalized;
-      }
-      console.error('[PantryAPI] Failed to load pantries from backend', error);
-      throw error;
+      console.warn('[PantryAPI] Backend error, falling back to static pantries.json', error);
+      const normalized = await loadFallbackPantries();
+      console.info('[PantryAPI] Using fallback pantries payload', normalized.length);
+      return normalized;
     }
   };
 
@@ -448,11 +562,7 @@
       console.info('[PantryAPI] Using backend pantry detail', backendId);
       return normalizePantry(pantry);
     } catch (error) {
-      if (!isNetworkError(error)) {
-        console.error('[PantryAPI] Failed to load pantry from backend', error);
-        throw error;
-      }
-      console.warn('[PantryAPI] Backend unreachable when fetching pantry, using static fallback.');
+      console.warn('[PantryAPI] Backend error when fetching pantry, using static fallback.', error);
       const fallback = await loadFallbackPantryById(backendId);
       if (!fallback) throw error;
       return fallback;
@@ -498,12 +608,13 @@
     }
   };
 
-  // Donations
+  // Donations — use normalized id so GET/POST always hit the same backend key (e.g. "1" for both "p-1" and "1")
   API.getDonations = async function getDonations(pantryId, page = 1, pageSize = 1) {
-    const { backend: backendId } = resolvePantryId(pantryId);
-    if (!backendId) return { items: [], page: 1, pageSize: 1, total: 0 };
+    const { normalized: normalizedId, backend: backendId } = resolvePantryId(pantryId);
+    const donationPantryId = normalizedId || backendId;
+    if (!donationPantryId) return { items: [], page: 1, pageSize: 1, total: 0 };
 
-    const url = `${API_BASE_URL}/donations${buildQuery({ pantryId: backendId, page, pageSize })}`;
+    const url = `${API_BASE_URL}/donations${buildQuery({ pantryId: donationPantryId, page, pageSize })}`;
 
     try {
       const data = await fetchJson(url);
@@ -520,6 +631,62 @@
         console.error('[PantryAPI] getDonations failed', e);
       }
       return { items: [], page, pageSize, total: 0 };
+    }
+  };
+
+  /** Get numeric timestamp (ms) from a donation; accepts ISO string from createdAt/created_at/timestamp. */
+  function getDonationTimeMs(d) {
+    const raw = d.createdAt ?? d.created_at ?? d.timestamp ?? d.updatedAt;
+    if (raw == null || raw === '') return Date.now();
+    const t = new Date(raw).getTime();
+    return Number.isFinite(t) ? t : Date.now();
+  }
+
+  /**
+   * Self-reported mode: estimate tot_reported_weight from donations in the last 24 hours.
+   * Backend already returns only donations within 24h; we do not re-filter by client time to avoid clock skew.
+   * Mapping: low_donation → 2 kg, medium_donation → 10 kg, high_donation → 25 kg.
+   * Returns { weightKg, updatedAt, source: 'donations' } or null if no donations in 24h.
+   */
+  API.getDonationBasedStock = async function getDonationBasedStock(pantryId) {
+    const { normalized: normalizedId } = resolvePantryId(pantryId);
+    if (!normalizedId) return null;
+    try {
+      const data = await API.getDonations(pantryId, 1, 100);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      // Backend already filters to 24h; use all returned items and sort by time descending (no client re-filter to avoid clock skew)
+      const recent = items.slice().sort((a, b) => getDonationTimeMs(b) - getDonationTimeMs(a));
+      if (recent.length === 0) return null;
+
+      const countLow = recent.filter((d) => (d.donationSize || '') === 'low_donation').length;
+      const countMedium = recent.filter((d) => (d.donationSize || '') === 'medium_donation').length;
+      const countHigh = recent.filter((d) => (d.donationSize || '') === 'high_donation').length;
+
+      let weightKg = null;
+      const firstTs = recent[0].createdAt ?? recent[0].created_at ?? recent[0].updatedAt ?? recent[0].timestamp;
+      const updatedAt = firstTs != null && firstTs !== '' ? (typeof firstTs === 'string' ? firstTs : new Date(firstTs).toISOString()) : new Date().toISOString();
+
+      if (countHigh >= 2) {
+        weightKg = DONATION_WEIGHT_KG.high_donation;
+      } else if (countLow >= 5) {
+        weightKg = DONATION_WEIGHT_KG.medium_donation;
+      } else {
+        const size = (recent[0].donationSize || '').trim();
+        weightKg = DONATION_WEIGHT_KG[size] != null ? DONATION_WEIGHT_KG[size] : null;
+      }
+
+      if (weightKg == null || !Number.isFinite(weightKg)) return null;
+      const tsStr = typeof updatedAt === 'string' ? updatedAt : (updatedAt instanceof Date ? updatedAt.toISOString() : String(updatedAt));
+      return {
+        weight: weightKg,
+        weightKg: weightKg,
+        updatedAt: tsStr,
+        timestamp: tsStr,
+        source: 'donations',
+      };
+    } catch (e) {
+      console.warn('getDonationBasedStock failed', e);
+      return null;
     }
   };
 
@@ -560,8 +727,9 @@
   };
 
   API.postDonation = async function postDonation(pantryId, payload = {}) {
-    const { backend: backendId } = resolvePantryId(pantryId);
-    if (!backendId) throw new Error('Pantry id is required');
+    const { normalized: normalizedId, backend: backendId } = resolvePantryId(pantryId);
+    const donationPantryId = normalizedId || backendId;
+    if (!donationPantryId) throw new Error('Pantry id is required');
 
     const note = trimString(payload.note);
     const donationSize = trimString(payload.donationSize);
@@ -574,7 +742,7 @@
     }
 
     const body = {
-      pantryId: backendId,
+      pantryId: donationPantryId,
       donationSize: donationSize,
       ...(note ? { note } : {}),
       ...(donationItems.length > 0 ? { donationItems } : {}),
@@ -639,35 +807,113 @@
     return API.getWishlist(pantryId);
   };
 
-  // Telemetry
+  // Stock / Telemetry priority: 1) Sensor (API telemetry/latest e.g. Beacon Hill 254 → Azure SQL);
+  // 2) Local device_to_pantry + pantry_data.json (within 24h); 3) Donations (last 24h). Sensor is always tried first.
   API.getTelemetryLatest = async function getTelemetryLatest(pantryId) {
-    const { backend: backendId } = resolvePantryId(pantryId);
-    if (!backendId) return null;
+    const { normalized: normalizedId } = resolvePantryId(pantryId);
+    if (!normalizedId) return null;
 
-    const url = `${API_BASE_URL}/telemetry${buildQuery({ pantryId: backendId, latest: true })}`;
+    const url = `${API_BASE_URL}/telemetry/latest${buildQuery({ pantryId: normalizedId })}`;
     try {
       const data = await fetchJson(url);
-      return data?.latest || null;
-    } catch (e) {
-      console.error('Error fetching telemetry latest:', e);
+      // Backend may return flat object { weight, doorStatus, timestamp } or wrapped { latest: {...} }
+      const raw = data != null && data.weight !== undefined ? data : (data?.latest ?? null);
+      if (raw == null) return null;
+      const weight = coerceNumber(raw.weight ?? raw.weightKg);
+      const timestamp = raw.timestamp ?? raw.updatedAt ?? raw.ts;
+      const tsStr = timestamp != null ? (typeof timestamp === 'string' ? timestamp : (timestamp instanceof Date ? timestamp.toISOString() : String(timestamp))) : undefined;
+      if (weight !== null && tsStr != null) {
+        return {
+          weight,
+          weightKg: weight,
+          doorStatus: raw.doorStatus,
+          timestamp: tsStr,
+          updatedAt: tsStr,
+          source: 'sensor',
+        };
+      }
       return null;
+    } catch (e) {
+      const status = e && e.status;
+      if (status === 404 || status === 500) {
+        console.warn('Telemetry API failed (', status, '), using local fallback:', e.message || e);
+      } else if (status != null) {
+        console.warn('Telemetry API failed, using local fallback:', e.message || e);
+      }
     }
+
+    // Fallback: match pantryId → deviceId via device_to_pantry.json; latest record from pantry_data.json (within 24h)
+    try {
+      const dtpRes = await fetch('./data/device_to_pantry.json', { cache: 'no-store' });
+      if (dtpRes?.ok) {
+        const deviceToPantry = await dtpRes.json();
+        const deviceId = Object.keys(deviceToPantry || {}).find(
+          (k) => String(deviceToPantry[k]) === String(normalizedId) || String(deviceToPantry[k]) === 'p-' + normalizedId
+        );
+        if (deviceId) {
+          const dataRes = await fetch('./pantry_data.json', { cache: 'no-store' });
+          if (dataRes?.ok) {
+            const list = await dataRes.json();
+            const rows = Array.isArray(list) ? list.filter((r) => (r.device_id || r.deviceId || '') === deviceId) : [];
+            if (rows.length > 0) {
+              const latestRow = rows.reduce((best, row) => {
+                const ts = new Date(row.timestamp || row.ts || row.time || 0).getTime();
+                return !best || ts > best.ts ? { row, ts } : best;
+              }, null);
+              if (latestRow?.row) {
+                const r = latestRow.row;
+                const directWeight = coerceNumber(r.weight ?? r.weightKg);
+                const s1 = Number(r.scale1 ?? 0);
+                const s2 = Number(r.scale2 ?? 0);
+                const s3 = Number(r.scale3 ?? 0);
+                const s4 = Number(r.scale4 ?? 0);
+                const sumWeight = [s1, s2, s3, s4].every((n) => Number.isFinite(n)) ? s1 + s2 + s3 + s4 : null;
+                const weightKg = directWeight !== null ? directWeight : sumWeight;
+                const timestamp = r.timestamp ?? r.ts ?? r.time;
+                const tsStr = timestamp != null ? (typeof timestamp === 'string' ? timestamp : (timestamp instanceof Date ? timestamp.toISOString() : String(timestamp))) : undefined;
+                if (weightKg != null && tsStr != null) {
+                  const rowTime = new Date(timestamp).getTime();
+                  const now = Date.now();
+                  if (rowTime >= now - DONATION_24H_MS) {
+                    return { weight: weightKg, weightKg, timestamp: tsStr, updatedAt: tsStr, source: 'fallback_local' };
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Local telemetry fallback failed:', e);
+    }
+
+    // Priority 3: Self-reported (donations in last 24h). Only show "unavailable" if no sensor AND no donations.
+    if (typeof API.getDonationBasedStock === 'function') {
+      const donationStock = await API.getDonationBasedStock(pantryId);
+      if (donationStock != null) return donationStock;
+    }
+    return null;
   };
 
   API.getTelemetryHistory = async function getTelemetryHistory(pantryId, from, to) {
-    const { backend: backendId } = resolvePantryId(pantryId);
-    if (!backendId) return [];
+    const { normalized: normalizedId } = resolvePantryId(pantryId);
+    if (!normalizedId) return [];
 
-    const url = `${API_BASE_URL}/telemetry${buildQuery({ pantryId: backendId, from, to })}`;
+    const url = `${API_BASE_URL}/telemetry${buildQuery({ pantryId: normalizedId, from, to })}`;
     try {
       const data = await fetchJson(url);
       return data?.items || [];
     } catch (e) {
+      if (e && e.status === 404) return [];
       console.error('Error fetching telemetry history:', e);
       return [];
     }
   };
 
   // Expose globally
+  API.STOCK_PARAMS = STOCK_PARAMS;
+  API.computeStockLevelFromWeight = computeStockLevelFromWeight;
+  API.isWeightInReasonableRange = isWeightInReasonableRange;
+
   window.PantryAPI = API;
 })();

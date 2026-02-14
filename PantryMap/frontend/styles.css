@@ -1,3 +1,8 @@
+.header a, nav a, .logo-link, a[href*="index.html"], .header a { text-decoration: none !important; }
+header a:hover, header a:active, header a:visited, header a:focus { text-decoration: none !important; }
+h1 { text-decoration: none !important; }
+h1 a { text-decoration: none !important; }
+
 .pantry-photo,
 .thumb img,
 .message-media img,
@@ -61,6 +66,8 @@ body.modal-open {
   margin-left: auto;
   margin-right: 32px;
 }
+/* Ensure nav links have no underline across the site */
+nav a { text-decoration: none; }
 .nav-link {
   color: var(--text);
   text-decoration: none;
@@ -140,6 +147,10 @@ body.modal-open {
   overflow-y: auto;
   overflow-x: hidden;
   flex-shrink: 0;
+  transition: width 240ms ease;
+}
+.details.expanded {
+  width: min(900px, 70vw);
 }
 .details.collapsed {
   width: 64px;
@@ -314,27 +325,8 @@ body.modal-open {
   box-shadow: none;
   outline: 1pt solid rgba(148, 163, 184, 0.35);
 }
-.stock-card-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
 .stock-card-head h2 {
   margin: 0 0 12px;
-}
-.stock-source-badge {
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: rgba(148, 163, 184, 0.1);
-  padding: 4px 10px;
-  border-radius: 12px;
-  white-space: nowrap;
-}
-.stock-source-badge-inactive {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.15);
-  font-weight: 500;
 }
 
 /* Shared card style for detail sections (wishlist) */
@@ -365,16 +357,7 @@ body.modal-open {
 .detail-gauge-svg {
   width: 100%;
   height: auto;
-  position: relative;
-  z-index: 1;
 }
-.detail-gauge-track {
-  fill: none;
-  stroke: rgba(148, 163, 184, 0.22);
-  stroke-width: 16;
-  stroke-linecap: round;
-}
-/* Removed: all styles now in inline style for proper color control */
 .detail-gauge-center {
   position: absolute;
   inset: 0;
@@ -384,8 +367,6 @@ body.modal-open {
   justify-content: flex-end;
   gap: 4px;
   padding-bottom: 8px;
-  z-index: 2;
-  pointer-events: none;
 }
 .detail-gauge-status {
   font-weight: 700;
@@ -630,6 +611,66 @@ body.modal-open {
   font-size: 14px;
   padding: 8px 0;
 }
+.wishlist-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+.wishlist-item-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 8px rgba(82, 183, 136, 0.1);
+}
+.wishlist-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.wishlist-item-name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 15px;
+  word-break: break-word;
+}
+.wishlist-item-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.wishlist-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.wishlist-item-edit,
+.wishlist-item-delete {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+.wishlist-item-edit:hover {
+  background: rgba(82, 183, 136, 0.1);
+  color: var(--accent);
+}
+.wishlist-item-delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--danger);
+}
 .wishlist-modal-overlay {
   position: fixed;
   inset: 0;
@@ -853,7 +894,6 @@ body.modal-open {
   font-size: 12px;
   color: var(--muted);
 }
-.stock-section,
 .support-grid,
 .wishlist-grid,
 .message-list {
@@ -1219,6 +1259,40 @@ body.modal-open {
   border-radius: 6px;
   box-shadow: none;
 }
+
+/* Map legend (pin colors = pantry type) */
+.map-legend {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  font-size: 13px;
+  color: var(--text, #1e293b);
+}
+.map-legend-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.3);
+}
+.map-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.map-legend-item:last-child { margin-bottom: 0; }
+.map-legend-pin {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  flex-shrink: 0;
+}
+
 .leaflet-popup-content-wrapper, .leaflet-popup-tip {
   background: var(--panel); 
   color: var(--text); 
@@ -1230,45 +1304,6 @@ body.modal-open {
   padding: 4px;
 }
 
-/* Stock level visualization */
-.stock-level {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 16px;
-}
-.stock-level-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-.stock-number {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--accent);
-}
-.stock-label {
-  font-size: 14px;
-  color: var(--muted);
-}
-.stock-chart {
-  display: flex;
-  gap: 4px;
-  align-items: flex-end;
-  height: 60px;
-}
-.stock-bar {
-  flex: 1;
-  background: var(--accent);
-  border-radius: 4px 4px 0 0;
-  opacity: 0.3;
-  transition: opacity 0.2s;
-}
-.stock-bar.active {
-  opacity: 1;
-}
 
 /* Pantry photo header */
 .pantry-photo {
@@ -1385,6 +1420,9 @@ body.modal-open {
     overflow-y: auto;
     overflow-x: hidden;
   }
+  .details.expanded {
+    width: 100vw;
+  }
   .details.hidden {
     display: none;
   }
@@ -1393,10 +1431,6 @@ body.modal-open {
   }
   .detail-hero-body {
     padding: 24px;
-  }
-  .stock-section {
-    grid-template-columns: 1fr;
-    gap: 16px;
   }
   .support-grid {
     grid-template-columns: 1fr;

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PantryMap 入口</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #f0f7ee 0%, #e8f0e4 100%);
+      }
+      .entry {
+        text-align: center;
+        padding: 2rem;
+      }
+      .entry h1 {
+        margin: 0 0 0.5rem;
+        font-size: 1.5rem;
+        color: #2d4a2a;
+      }
+      .entry p {
+        margin: 0 0 2rem;
+        color: #555;
+        font-size: 0.95rem;
+      }
+      .links {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+      .links a {
+        display: inline-block;
+        padding: 1rem 1.5rem;
+        border-radius: 12px;
+        text-decoration: none;
+        font-weight: 600;
+        transition: transform 0.2s, box-shadow 0.2s;
+      }
+      .links a:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+      }
+      .links a.pantry-map {
+        background: #2d4a2a;
+        color: #fff;
+      }
+      .links a.my-pantry {
+        background: #fff;
+        color: #2d4a2a;
+        border: 2px solid #2d4a2a;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="entry">
+      <h1>🌿 PantryMap</h1>
+      <p>选择要打开的页面</p>
+      <div class="links">
+        <a href="./index.html" class="pantry-map">Pantry Map（地图）</a>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+{
+  "modules": {
+    "performance": {
+      "stockLevel": 25.8,
+      "temperature": 10.7,
+      "doorVisits": 326,
+      "batteryStatus": "84%"
+    },
+    "persona": {
+      "name": "Beacon Hill Pantry",
+      "status": "Open",
+      "goal": {
+        "current": 326,
+        "target": 500
+      },
+      "preferences": [
+        "Canned Veg",
+        "Pasta",
+        "Baby Formula"
+      ]
+    },
+    "highlights": {
+      "hasAlert": true,
+      "alertMessage": "High Temperature Detected",
+      "recentActivity": [
+        {
+          "action": "Pantry Accessed",
+          "time": "2026-01-29 21:33:13.613",
+          "details": "Temp: 10.66\u00b0C"
+        },
+        {
+          "action": "Pantry Accessed",
+          "time": "2026-01-29 21:19:05.673",
+          "details": "Temp: 10.61\u00b0C"
+        },
+        {
+          "action": "Pantry Accessed",
+          "time": "2026-01-29 19:10:36.053",
+          "details": "Temp: 9.81\u00b0C"
+        }
+      ]
+    }
+  }
+}

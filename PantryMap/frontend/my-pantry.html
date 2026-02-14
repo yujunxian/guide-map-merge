@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>My Pantries — PantryMap</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./my-pantry.css" />
+    <style>
+      /* Force-scroll emergency overrides */
+      html, body {
+        overflow-y: scroll !important;
+        overflow-x: hidden !important;
+        height: auto !important;
+        min-height: 100vh !important;
+        max-height: none !important;
+      }
+      * { max-height: none !important; }
+      body > *, main, .container, [class*="page"], [class*="content"] {
+        overflow: visible !important;
+        height: auto !important;
+        max-height: none !important;
+      }
+    </style>
+    <meta http-equiv="refresh" content="0; url=./index.html" />
+  </head>
+  <body class="history-page">
+    <script>
+      window.location.replace("./index.html");
+    </script>
+    <div id="app">
+      <header class="app-header">
+        <a href="./index.html" class="brand">
+          <span class="logo">🌿</span>
+          <span class="title">Pantry Map</span>
+        </a>
+        <nav class="top-nav">
+          <a href="./index.html" class="nav-link">Pantry Map</a>
+          <a href="./my-pantry.html" class="nav-link active">My Pantry</a>
+          <a href="#" class="nav-link">Food Safety Education</a>
+          <a href="./about.html" class="nav-link">About Us</a>
+        </nav>
+        <div class="controls">
+          <a href="#" class="header-cta">Join Us / Log In</a>
+        </div>
+      </header>
+
+      <main class="layout" style="align-items: flex-start;">
+        <div style="flex:1; padding: 28px; max-width: 1200px; margin: 0 auto;">
+
+          <!-- View 1: Pantry List (shown when no pantry is selected) -->
+          <div id="pantry-list-view" class="mp-view">
+            <header class="mp-header">
+              <div class="mp-title-wrap">
+                <h1 id="listViewTitle" class="mp-title">My Pantries</h1>
+                <p id="listViewSubtitle" class="mp-subtitle">Manage and monitor your community pantries</p>
+              </div>
+            </header>
+
+            <!-- List Controls -->
+            <div class="mp-list-controls">
+              <div class="mp-search-wrap">
+                <i class="fa-solid fa-search"></i>
+                <input type="text" id="mp-search" class="mp-search-input" placeholder="Search pantries..." />
+              </div>
+              <div class="mp-filter-controls">
+                <select id="mp-filter-status" class="mp-filter-select">
+                  <option value="all">All Status</option>
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                </select>
+                <select id="mp-filter-stock" class="mp-filter-select">
+                  <option value="all">All Stock Levels</option>
+                  <option value="high">High Stock</option>
+                  <option value="medium">Medium Stock</option>
+                  <option value="low">Low Stock</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Pantry List Grid -->
+            <div id="mp-pantry-list" class="mp-pantry-grid">
+              <div class="mp-loading">Loading your pantries...</div>
+            </div>
+          </div>
+
+          <!-- View 2: Pantry Detail (shown when a pantry is selected) -->
+          <div id="pantry-detail-view" class="mp-view" style="display: none;">
+            <header class="mp-header history-header">
+              <button id="mp-back-to-list" class="back-link mp-back"><i class="fa-solid fa-arrow-left"></i> Back to My Pantries</button>
+              <div class="history-title mp-title-wrap">
+                <h1 id="pantryTitle" class="mp-title">My Pantry</h1>
+                <p id="pantrySubtitle" class="mp-subtitle">Overview and management tools for your pantry.</p>
+              </div>
+            </header>
+
+            <nav class="tabs mp-tabs" role="tablist" aria-label="My Pantry Tabs">
+              <button class="tab active" data-tab="overview"><span class="tab-ico">📊</span> <span class="tab-label">Overview</span></button>
+              <button class="tab" data-tab="sensors"><span class="tab-ico">📡</span> <span class="tab-label">Sensors</span></button>
+              <button class="tab" data-tab="wishlist"><span class="tab-ico">📝</span> <span class="tab-label">Wishlist</span></button>
+              <button class="tab" data-tab="activity"><span class="tab-ico">📋</span> <span class="tab-label">Activity</span></button>
+              <button class="tab" data-tab="settings"><span class="tab-ico">⚙️</span> <span class="tab-label">Settings</span></button>
+            </nav>
+
+          <div class="tab-panels">
+            <section id="tab-overview" class="tab-panel active">
+              <div class="grid-3">
+                <div class="card">
+                  <h3>Basic Info</h3>
+                  <div id="basicInfo"></div>
+                </div>
+                <div class="card">
+                  <h3>Status</h3>
+                  <div id="statusCards"></div>
+                </div>
+                <div class="card">
+                  <h3>Inventory Categories</h3>
+                  <div id="inventoryCategories"></div>
+                </div>
+              </div>
+              
+              <!-- Map preview card (small interactive map) -->
+              <div class="map-preview-card card" style="margin-top:18px;">
+                <h3>📍 Location</h3>
+                <div id="pantry-mini-map" style="height:280px; border-radius:8px; overflow:hidden;"></div>
+              </div>
+            </section>
+
+            <section id="tab-sensors" class="tab-panel">
+              <div class="history-main">
+                <!-- Top: Recent Activity Summary (full width) -->
+                <div class="activity-summary-section">
+                  <div class="mp-filter-wrap" style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
+                    <h3 class="section-title" style="margin:0;">📊 Recent Activity Summary</h3>
+                    <div style="margin-left:12px;">
+                      <label for="mpTimeFilter" class="visually-hidden">Filter by time</label>
+                      <select id="mpTimeFilter" class="mp-time-filter" aria-label="Time Filter">
+                        <option value="all">All Time</option>
+                        <option value="12h">Last 12 Hours</option>
+                        <option value="24h">Last 24 Hours</option>
+                        <option value="48h">Last 2 Days</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div id="activitySummaryList" class="activity-cards-container">
+                    <div class="history-placeholder">Loading summary…</div>
+                  </div>
+                  <div id="csvDebugPanel" style="margin-top:12px;font-size:13px;color:#444;display:none;" aria-hidden="true"></div>
+                  <div style="margin-top:12px;text-align:right;"><button id="activityShowMore" class="modal-btn">Show more</button></div>
+                </div>
+
+                <!-- Middle: two-column layout for Weight Trend and Door Events -->
+                <div class="sensors-content-grid">
+                  <div class="chart-column">
+                    <div class="history-card">
+                      <div class="history-card-header">
+                        <h2>Weight Trend</h2>
+                        <span data-weight-range class="history-meta"></span>
+                      </div>
+                      <div class="chart-wrapper">
+                        <svg data-weight-chart viewBox="0 0 720 320" role="img" aria-label="Weight sensor readings over time"></svg>
+                      </div>
+                      <div data-weight-legend class="history-meta"></div>
+                    </div>
+                  </div>
+
+                  <div class="events-column">
+                    <div class="history-card">
+                      <div class="history-card-header">
+                        <h2>Door Events</h2>
+                        <span data-door-summary class="history-meta"></span>
+                      </div>
+                      <div data-door-timeline class="door-timeline compact"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="tab-wishlist" class="tab-panel">
+              <div class="card">
+                <div class="wishlist-header">
+                  <div>
+                    <h3>Receiver Requests</h3>
+                    <p class="wishlist-desc">Items requested by community members. Mark as "Donated" when available, or "Not Yet" if still needed.</p>
+                  </div>
+                  <div class="wishlist-header-right">
+                    <div id="wishlist-counter" class="wishlist-counter"></div>
+                    <button id="mp-wishlist-add" class="btn btn-primary">+ Add Request</button>
+                  </div>
+                </div>
+                <div id="mp-wishlist"></div>
+              </div>
+            </section>
+
+            <section id="tab-activity" class="tab-panel">
+              <div class="card">
+                <h3>Activity Log</h3>
+                <div id="activityLog">(No activity yet)</div>
+              </div>
+            </section>
+
+            <section id="tab-settings" class="tab-panel">
+              <div class="settings-wrap">
+                <div class="card settings-card" id="settings-main-card">
+                  <h3>Settings</h3>
+                  <div class="settings-grid">
+                    <div class="settings-module">
+                      <div class="module-title">Basic Details</div>
+                      <div class="module-content">
+                        <label class="form-label">Pantry Name</label>
+                        <input id="settings-name-input" class="form-input" placeholder="Pantry name" />
+                        <div class="muted small" id="settings-name-sub">&nbsp;</div>
+
+                        <label class="form-label">Address</label>
+                        <textarea id="settings-address" class="form-textarea" placeholder="Street address, city, state, ZIP"></textarea>
+
+                        <label class="form-label">Description</label>
+                        <textarea id="settings-description" class="form-textarea" placeholder="Short description of this pantry"></textarea>
+                      </div>
+                    </div>
+
+                    <div class="settings-module">
+                      <div class="module-title">Contact Info</div>
+                      <div class="module-content">
+                        <div class="contact-grid">
+                          <input id="settings-contact-name" class="form-input full-span" placeholder="Contact name" />
+                          <input id="settings-contact-phone" class="form-input" placeholder="Phone" />
+                          <input id="settings-contact-email" class="form-input" placeholder="Email" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="form-actions"><button id="btn-update-settings" class="btn btn-primary">Update</button></div>
+                </div>
+
+                <div class="card" id="settings-notifications">
+                  <h3>Notification Settings</h3>
+                  <div class="notifications-list">
+                    <div class="notification-row">
+                      <div>
+                        <strong>Low inventory alerts</strong>
+                        <div class="small muted">Receive alerts when stock is low</div>
+                      </div>
+                      <label class="switch"><input id="toggle-low-inv" type="checkbox"><span class="slider"></span></label>
+                    </div>
+
+                    <div class="notification-row">
+                      <div>
+                        <strong>Maintenance reminders</strong>
+                        <div class="small muted">Regular reminders for cleanup/maintenance</div>
+                      </div>
+                      <label class="switch"><input id="toggle-maint-rem" type="checkbox"><span class="slider"></span></label>
+                    </div>
+                  </div>
+                  <div class="form-actions"><button id="btn-save-notifications" class="btn btn-primary">Update</button></div>
+                </div>
+
+                <div class="card" id="settings-danger">
+                  <h3 style="color:var(--danger);">Danger Zone</h3>
+                  <div class="danger-card">
+                    <div class="danger-item">
+                      <div class="danger-left">
+                          <strong id="danger-action-title" class="danger-title">Deactivate Pantry</strong>
+                          <div id="danger-action-desc" class="small muted">Temporarily hide this pantry from public listings</div>
+                        </div>
+                      <div class="danger-right">
+                        <button id="btn-deactivate" class="btn btn-outline-danger">Deactivate</button>
+                      </div>
+                    </div>
+
+                    <div class="divider" role="separator" aria-hidden="true"></div>
+
+                    <div class="danger-item">
+                      <div class="danger-left">
+                        <strong class="danger-title" style="color:var(--danger);">Delete Pantry</strong>
+                        <div class="small muted">Permanently delete this pantry and its local data. This action is irreversible.</div>
+                      </div>
+                      <div class="danger-right">
+                        <button id="btn-delete" class="btn btn-danger">Delete Permanently</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- edit-name modal removed — unified form now handles name editing -->
+
+              <!-- Delete confirm modal (moved to end of body) -->
+
+              <div id="mp-toast" aria-live="polite" style="position:fixed;right:18px;bottom:18px;z-index:6000;pointer-events:none;"></div>
+            </section>
+          </div>
+          </div><!-- End of pantry-detail-view -->
+        </div>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+    <script src="./api.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="./my-pantry.js"></script>
+  </body>
+</html>
